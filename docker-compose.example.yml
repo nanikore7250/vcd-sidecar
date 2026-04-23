@@ -1,0 +1,32 @@
+version: "3.8"
+
+services:
+  # 既存のアプリケーション（変更不要）
+  app:
+    image: myapp:latest
+    restart: always
+    volumes:
+      - app_data:/data
+
+  # VCD Sidecar（追加するだけ）
+  vcd-sidecar:
+    image: nanikore7250/vcd-sidecar:latest
+    restart: always
+    environment:
+      - VCD_WEBHOOK_PORT=8888
+      - VCD_FORENSICS_DIR=/var/vcd/forensics
+      - VCD_MEMORY_DUMP=false
+      - VCD_TERMINATE_MODE=graceful
+      - VCD_TERMINATE_TIMEOUT=30
+      # 監視対象コンテナ名（省略するとFalcoアラートのcontainer.idから自動取得）
+      # - VCD_TARGET_CONTAINER=app
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock  # コンテナ操作に必要
+      - ./forensics:/var/vcd/forensics              # 証拠ファイルをホストに永続化
+    ports:
+      - "8888:8888"  # Falcosidekick からのwebhook受信
+    cap_add:
+      - NET_ADMIN    # iptablesによるネットワーク断に必要
+
+volumes:
+  app_data:

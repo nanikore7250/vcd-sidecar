@@ -1,0 +1,50 @@
+- rule: VCD - Shell spawned in container
+  desc: シェルがコンテナ内で起動した（コマンドインジェクション・リバースシェルの可能性）
+  condition: container and proc.name in (bash, sh, zsh, dash, ksh)
+  output: "Shell spawned in container (container=%container.name container_id=%container.id pid=%proc.pid user=%user.name cmdline=%proc.cmdline)"
+  priority: WARNING
+  tags: [vcd, shell]
+
+- rule: VCD - Outbound connection in container
+  desc: コンテナからの予期しない外向き接続（リバースシェルの可能性）
+  condition: >
+    container
+    and evt.type = connect
+    and fd.typechar = 4
+    and not fd.sip in (127.0.0.1)
+  output: "Outbound connection from container (container=%container.name container_id=%container.id proc=%proc.name pid=%proc.pid dest=%fd.rip:%fd.rport)"
+  priority: WARNING
+  tags: [vcd, network]
+
+- rule: VCD - Unexpected file written in container
+  desc: コンテナ内に想定外のファイルが配置された（Webshell等の可能性）
+  condition: >
+    container
+    and evt.type in (creat, open)
+    and evt.is_open_write = true
+    and fd.typechar = f
+    and fd.name startswith /tmp
+  output: "Unexpected file written in container (container=%container.name container_id=%container.id proc=%proc.name pid=%proc.pid file=%fd.name)"
+  priority: WARNING
+  tags: [vcd, file]
+
+- rule: VCD - Privilege escalation attempt
+  desc: 特権昇格の試み（setuid/setgidシステムコール）
+  condition: >
+    container
+    and evt.type in (setuid, setgid)
+    and user.name != root
+  output: "Privilege escalation attempt (container=%container.name container_id=%container.id proc=%proc.name pid=%proc.pid user=%user.name)"
+  priority: CRITICAL
+  tags: [vcd, privilege]
+
+- rule: VCD - Sensitive file read in container
+  desc: /etc/passwd や /etc/shadow など機密ファイルへのアクセス
+  condition: >
+    container
+    and evt.type = open
+    and fd.name in (/etc/shadow, /etc/passwd, /etc/sudoers)
+    and not proc.name in (cat, grep, awk)
+  output: "Sensitive file read in container (container=%container.name container_id=%container.id proc=%proc.name pid=%proc.pid file=%fd.name)"
+  priority: WARNING
+  tags: [vcd, file, sensitive]
