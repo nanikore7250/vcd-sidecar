@@ -8,7 +8,9 @@
 
 ## Reporting a Vulnerability
 
-Please report vulnerabilities via GitHub Issues or email.
+Please report vulnerabilities via
+[GitHub Security Advisories](https://github.com/nanikore7250/vcd-sidecar/security/advisories/new).
+Do not use GitHub Issues for vulnerability reports.
 
 ---
 

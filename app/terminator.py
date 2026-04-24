@@ -3,14 +3,8 @@ import docker
 
 logger = logging.getLogger(__name__)
 
-_docker_client = None
-
-
 def _get_docker_client() -> docker.DockerClient:
-    global _docker_client
-    if _docker_client is None:
-        _docker_client = docker.from_env()
-    return _docker_client
+    return docker.from_env()
 
 
 def terminate_container(

@@ -49,7 +49,7 @@ def run_vcd_flow(container_id: str, alert: dict):
     thread = threading.Thread(
         target=_execute_flow,
         args=(container_id, alert),
-        daemon=True,
+        daemon=False,
         name=f"vcd-flow-{container_id[:12]}",
     )
     thread.start()

@@ -40,6 +40,8 @@
 
 - rule: VCD - Sensitive file read in container
   desc: /etc/passwd や /etc/shadow など機密ファイルへのアクセス
+  # NOTE: 除外リストは最小限です。本番環境に合わせてチューニングしてください。
+  # 例: less, vim, python, ruby など正常にアクセスするプロセスを追加する
   condition: >
     container
     and evt.type = open
