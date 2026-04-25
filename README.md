@@ -91,7 +91,7 @@ cp falco/vcd_rules.yaml /etc/falco/rules.d/
 
 ## VCD Flow
 
-When a POST arrives at `/webhook` from Falcosidekick:
+When a POST arrives at `/webhook`:
 
 ```
 ① Network isolation  (iptables DROP on all inbound/outbound FORWARD traffic)
@@ -258,7 +258,7 @@ cp falco/vcd_rules.yaml /etc/falco/rules.d/
 
 ## VCDフロー
 
-Falcosidekickから `/webhook` にPOSTが届くと以下の順序で実行されます：
+`/webhook` にPOSTが届くと以下の順序で実行されます：
 
 ```
 ① ネットワーク断（iptables で外向き/内向き通信を遮断）
