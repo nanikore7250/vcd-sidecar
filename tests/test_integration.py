@@ -40,8 +40,8 @@ def target_container(docker_client):
     yield container
     try:
         container.remove(force=True)
-    except Exception:
-        pass
+    except docker_sdk.errors.NotFound:
+        pass  # vcd_flow already removed it — that's expected
 
 
 @pytest.fixture
@@ -87,18 +87,28 @@ def test_webhook_triggers_termination(flask_client, target_container, docker_cli
     assert resp.status_code == 200
     assert resp.get_json()["status"] == "ok"
 
-    # Wait for the background thread to terminate the container
+    # Wait for the background thread to terminate and remove the container
     deadline = time.time() + 10
+    removed = False
     while time.time() < deadline:
-        target_container.reload()
-        if target_container.status in ("exited", "dead", "removing"):
+        try:
+            target_container.reload()
+            if target_container.status in ("exited", "dead", "removing"):
+                break
+        except docker_sdk.errors.NotFound:
+            removed = True
             break
         time.sleep(0.5)
 
-    target_container.reload()
-    assert target_container.status in ("exited", "dead"), (
-        f"Container was not terminated: status={target_container.status}"
-    )
+    if not removed:
+        try:
+            target_container.reload()
+            final_status = target_container.status
+        except docker_sdk.errors.NotFound:
+            final_status = "removed"
+        assert final_status in ("exited", "dead", "removed"), (
+            f"Container was not terminated: status={final_status}"
+        )
 
 
 def test_forensics_file_written(flask_client, target_container, docker_client, tmp_path):

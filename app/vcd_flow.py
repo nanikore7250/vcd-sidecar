@@ -2,7 +2,7 @@ import logging
 import threading
 
 from app.config import config
-from app.network import isolate_container
+from app.network import isolate_container, remove_isolation
 from app.forensics import collect_forensics, collect_memory_dump
 from app.terminator import terminate_container
 
@@ -10,12 +10,13 @@ logger = logging.getLogger(__name__)
 
 
 def _execute_flow(container_id: str, alert: dict):
-    """Execute the VCD flow: isolate → forensics → (optional dump) → terminate."""
+    """Execute the VCD flow: isolate → forensics → (optional dump) → terminate → cleanup."""
     pid = alert.get("proc_pid", "")
+    isolated_ip: str = ""
 
     # ① Network isolation (must be first)
     try:
-        isolate_container(container_id)
+        isolated_ip = isolate_container(container_id)
     except Exception as e:
         logger.error("Network isolation failed for %s: %s", container_id, e)
         # Continue — termination is more important than clean isolation
@@ -33,7 +34,7 @@ def _execute_flow(container_id: str, alert: dict):
         except Exception as e:
             logger.error("Memory dump failed for pid %s: %s", pid, e)
 
-    # ④ Terminate
+    # ④ Terminate (stop + remove so Docker Compose recreates a clean container)
     try:
         terminate_container(
             container_id,
@@ -42,6 +43,21 @@ def _execute_flow(container_id: str, alert: dict):
         )
     except Exception as e:
         logger.error("Termination failed for %s: %s", container_id, e)
+
+    # ⑤ Remove the container so restart: always recreates it fresh from the image.
+    #    Without this, Docker merely restarts the same writable layer (dirty state).
+    try:
+        import docker
+        client = docker.from_env()
+        container = client.containers.get(container_id)
+        container.remove(force=True)
+        logger.info("Container %s removed; Docker will recreate it on next restart", container_id)
+    except Exception as e:
+        logger.error("Container remove failed for %s: %s", container_id, e)
+
+    # ⑥ Remove iptables isolation rules so the recreated container has clean network access.
+    if isolated_ip:
+        remove_isolation(isolated_ip)
 
 
 def run_vcd_flow(container_id: str, alert: dict):
