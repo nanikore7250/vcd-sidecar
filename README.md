@@ -1,8 +1,176 @@
 # vcd-sidecar
 
+**Volatile Cyber Defense (VCD) Phase 4** — Language-agnostic sidecar container for automated isolation, forensics, and self-destruction
+
+Receives attack alerts via webhook and executes network isolation → evidence collection → container self-destruction.
+Bundled with a reference integration for Falco / Falcosidekick.
+No application code changes required — just add it alongside your existing Falco setup.
+
+---
+
+## Architecture
+
+```
+[Falco DaemonSet]
+  monitors syscalls (shell spawn, reverse shell, privilege escalation, etc.)
+  ↓ alert
+[Falcosidekick]
+  forwards alerts to webhook
+  ↓ HTTP POST
+[vcd-sidecar]
+  ① network isolation (iptables)
+  ② evidence collection (/proc)
+  ③ memory dump (gcore, optional)
+  ④ container self-destruction (docker stop / kill)
+  ↓ via volume
+[forensics storage]
+  evidence files persisted
+```
+
+---
+
+## Quick Start
+
+### 1. Add to your docker-compose
+
+```yaml
+services:
+  app:
+    image: myapp:latest
+    restart: always   # required: auto-restart after self-destruction
+
+  vcd-sidecar:
+    image: nanikore7250/vcd-sidecar:latest
+    restart: always
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./forensics:/var/vcd/forensics
+    ports:
+      - "8888:8888"
+    cap_add:
+      - NET_ADMIN
+```
+
+See [docker-compose.example.yml](docker-compose.example.yml) for a complete example.
+
+### 2. Configure Falcosidekick to forward to vcd-sidecar
+
+```yaml
+webhook:
+  address: http://vcd-sidecar:8888/webhook
+```
+
+### 3. Add Falco custom rules (optional)
+
+```bash
+cp falco/vcd_rules.yaml /etc/falco/rules.d/
+```
+
+---
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VCD_WEBHOOK_PORT` | `8888` | Webhook listening port |
+| `VCD_FORENSICS_DIR` | `/var/vcd/forensics` | Evidence file output directory |
+| `VCD_MEMORY_DUMP` | `false` | Enable gcore memory dump |
+| `VCD_TERMINATE_MODE` | `graceful` | Termination mode: `graceful` / `strict` / `timeout` |
+| `VCD_TERMINATE_TIMEOUT` | `30` | Wait seconds for `timeout` mode |
+| `VCD_TARGET_CONTAINER` | (empty) | Target container name (auto-detected from alert if unset) |
+
+### Termination Modes
+
+| Mode | Behavior | Use case |
+|------|----------|----------|
+| `graceful` | `docker stop` (SIGTERM → SIGKILL after 10 s) | Default. Balances availability and security |
+| `strict` | `docker kill` (immediate SIGKILL) | High-security. No waiting for in-flight requests |
+| `timeout` | `docker stop -t N` (SIGKILL after N seconds) | Tune risk tolerance via `VCD_TERMINATE_TIMEOUT` |
+
+---
+
+## VCD Flow
+
+When a POST arrives at `/webhook` from Falcosidekick:
+
+```
+① Network isolation  (iptables DROP on all inbound/outbound FORWARD traffic)
+② Lightweight forensics  (/proc/{pid}/environ, cmdline, net/tcp, fd/)
+③ Memory dump  (only when VCD_MEMORY_DUMP=true)
+④ Container self-destruction  (according to VCD_TERMINATE_MODE)
+```
+
+Network isolation runs first to prevent external communication during evidence collection.
+
+---
+
+## Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/webhook` | POST | Receive alerts from Falcosidekick |
+| `/healthz` | GET | Health check |
+
+---
+
+## Evidence File Format
+
+```
+/var/vcd/forensics/
+└── 20240423T123456Z_abc123def456.json
+```
+
+```json
+{
+  "timestamp": "20240423T123456Z",
+  "container_id": "abc123...",
+  "falco_alert": { "rule": "...", "priority": "WARNING", ... },
+  "proc": {
+    "pid": "1234",
+    "cmdline": "bash",
+    "environ": "PATH=/usr/bin\n...",
+    "net_tcp": "...",
+    "open_files": ["0 -> /dev/pts/0", ...]
+  }
+}
+```
+
+---
+
+## Security Notes
+
+See [SECURITY.md](SECURITY.md) for details.
+
+- Mounting `docker.sock` grants the ability to operate all containers on the host
+- `NET_ADMIN` capability is required
+- Without `restart: always`, the service will remain stopped after self-destruction
+- Tune Falco rules carefully to minimize false positives
+
+---
+
+## References
+
+- VCD proof-of-concept: https://github.com/nanikore7250/VolatileCyberDefense
+- vcd-python (app-embedded variant): https://github.com/nanikore7250/vcd-python
+- Paper (Zenodo): https://zenodo.org/records/19648507
+- Falco: https://falco.org
+- Falcosidekick: https://github.com/falcosecurity/falcosidekick
+
+---
+
+## License
+
+MIT
+
+---
+---
+
+# vcd-sidecar
+
 **Volatile Cyber Defense (VCD) Phase 4** — 言語非依存のSidecarコンテナ型自壊・証拠保全システム
 
-Falcoが検知した攻撃アラートを受け取り、**ネットワーク断 → 証拠保全 → コンテナ自壊**を実行するSidecarコンテナです。
+webhookで攻撃アラートを受け取り、ネットワーク断 → 証拠保全 → コンテナ自壊を実行するSidecarコンテナです。
+Falco / Falcosidekick との連携を実証例として同梱しています。
 アプリケーションのコードを一切変更せず、既存のFalco環境に追加するだけでVCDが機能します。
 
 ---
