@@ -5,6 +5,4 @@ __pycache__/
 *.pyd
 venv/
 forensics
-docker-compose.test.yml
 app
-vuln-app

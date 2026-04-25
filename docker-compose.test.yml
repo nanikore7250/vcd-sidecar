@@ -1,0 +1,65 @@
+version: "3.8"
+
+# VCD 動作検証環境
+# 使い方: docker compose -f docker-compose.test.yml up --build
+#
+# ⚠ このファイルは検証専用です。本番環境では使用しないでください。
+#
+# 再生成フロー:
+#   vcd-sidecar が vuln-app を停止 → 削除
+#   → vuln-app-watchdog が destroy イベントを検知
+#   → docker run で vcd-test-vuln-app:latest からクリーンなコンテナを再生成
+
+services:
+
+  # 脆弱なPHPアプリ（攻撃対象）
+  vuln-app:
+    build: tests/vuln-app
+    image: vcd-test-vuln-app:latest   # Watchdogが直接参照できるよう名前を固定
+    container_name: vcd-test-vuln-app
+    restart: "no"                     # Watchdogが再生成を担当するため daemon restart は不要
+    ports:
+      - "8080:80"
+    networks:
+      - vcd-test-net
+
+  # VCD Sidecar
+  vcd-sidecar:
+    build: .
+    container_name: vcd-test-sidecar
+    restart: always
+    environment:
+      - VCD_WEBHOOK_PORT=8888
+      - VCD_FORENSICS_DIR=/var/vcd/forensics
+      - VCD_MEMORY_DUMP=false
+      - VCD_TERMINATE_MODE=graceful
+      - VCD_TERMINATE_TIMEOUT=30
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./forensics:/var/vcd/forensics
+    ports:
+      - "8888:8888"
+    cap_add:
+      - NET_ADMIN
+    networks:
+      - vcd-test-net
+
+  # vuln-app の destroy イベントを監視し、docker run で再生成する
+  # docker compose を使わないのでプロジェクト名の不一致問題が起きない
+  vuln-app-watchdog:
+    image: docker:27-cli
+    container_name: vcd-test-watchdog
+    restart: always
+    depends_on:
+      - vuln-app
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./tests/vuln-app-watchdog.sh:/watchdog.sh:ro
+    command: sh /watchdog.sh
+    networks:
+      - vcd-test-net
+
+networks:
+  vcd-test-net:
+    name: vcd-test-net    # 固定名にすることでWatchdogの docker run から参照できる
+    driver: bridge
