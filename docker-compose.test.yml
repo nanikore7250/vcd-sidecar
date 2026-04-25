@@ -1,29 +1,94 @@
 version: "3.8"
 
-# VCD 動作検証環境
-# 使い方: docker compose -f docker-compose.test.yml up --build
+# VCD 動作検証環境（Falco統合版）
+#
+# アーキテクチャ:
+#   vuln-app  ← 攻撃者が操作（ブラウザで http://localhost:8080）
+#      ↓ syscall
+#   Falco     ← カーネルレベルで検知（modern eBPF）
+#      ↓ HTTP
+#   Falcosidekick ← アラートをフィルタ・転送
+#      ↓ HTTP POST /webhook
+#   vcd-sidecar ← ネットワーク断 → 証拠保全 → コンテナ削除
+#      ↓ destroy イベント
+#   vuln-app-watchdog ← イメージから再生成（クリーンな状態に戻る）
+#
+# 使い方:
+#   docker compose -f docker-compose.test.yml up --build
+#
+# ドライバ要件（WSL2 / Linux 5.8+ でサポート）:
+#   このファイルは modern eBPF を使用する。
+#   カーネル 5.8 以上かつ BTF（BPF Type Format）が有効であることが必要。
+#   WSL2 kernel 6.x では動作確認済み。
+#   BTF 未対応環境では falco の command を以下に変更してください:
+#     command: ["falco"]  # カーネルモジュールを自動選択（要 privileged + /boot /lib/modules マウント）
 #
 # ⚠ このファイルは検証専用です。本番環境では使用しないでください。
-#
-# 再生成フロー:
-#   vcd-sidecar が vuln-app を停止 → 削除
-#   → vuln-app-watchdog が destroy イベントを検知
-#   → docker run で vcd-test-vuln-app:latest からクリーンなコンテナを再生成
 
 services:
 
-  # 脆弱なPHPアプリ（攻撃対象）
+  # ────────────────────────────────
+  # 1. 脆弱なPHPアプリ（攻撃対象）
+  # ────────────────────────────────
   vuln-app:
     build: tests/vuln-app
-    image: vcd-test-vuln-app:latest   # Watchdogが直接参照できるよう名前を固定
+    image: vcd-test-vuln-app:latest
     container_name: vcd-test-vuln-app
-    restart: "no"                     # Watchdogが再生成を担当するため daemon restart は不要
+    restart: "no"                     # watchdog が再生成を担当
     ports:
-      - "8080:80"
+      - "8080:80"                     # http://localhost:8080
     networks:
       - vcd-test-net
 
-  # VCD Sidecar
+  # ────────────────────────────────
+  # 2. Falco — syscall監視エンジン
+  # ────────────────────────────────
+  falco:
+    image: falcosecurity/falco-no-driver:latest
+    container_name: vcd-test-falco
+    restart: on-failure
+    privileged: true                  # eBPF プローブのロードに必要
+    environment:
+      # HOST_ROOT を設定することで Falco が /host 配下のカーネル情報と
+      # Docker ソケットを自動検出する（container.id / container.name の解決に必要）
+      - HOST_ROOT=/host
+    command: ["/usr/bin/falco", "--modern-bpf"]
+    volumes:
+      - /proc:/host/proc:ro
+      - /var/run/docker.sock:/host/var/run/docker.sock
+      - ./falco/falco.yaml:/etc/falco/falco.yaml:ro
+      # カスタムVCDルール（/etc/falco/rules.d/ に配置することで組み込みルールと共存）
+      - ./falco/vcd_rules.yaml:/etc/falco/rules.d/vcd_rules.yaml:ro
+    depends_on:
+      - falcosidekick
+    networks:
+      - vcd-test-net
+
+  # ────────────────────────────────
+  # 3. Falcosidekick — アラート転送ルーター
+  # ────────────────────────────────
+  falcosidekick:
+    image: falcosecurity/falcosidekick:latest
+    container_name: vcd-test-falcosidekick
+    restart: always
+    environment:
+      # vcd-sidecar の webhook に転送
+      - WEBHOOK_ADDRESS=http://vcd-sidecar:8888/webhook
+      - WEBHOOK_CHECKCERT=false
+      # WARNING 以上のアラートのみ転送（DEBUG / INFORMATIONAL を除外）
+      - WEBHOOK_MINIMUMPRIORITY=warning
+      # 転送ログを表示（動作確認用）
+      - DEBUG=true
+    ports:
+      - "2801:2801"                   # Falco → Falcosidekick（内部通信用）
+    depends_on:
+      - vcd-sidecar
+    networks:
+      - vcd-test-net
+
+  # ────────────────────────────────
+  # 4. VCD Sidecar
+  # ────────────────────────────────
   vcd-sidecar:
     build: .
     container_name: vcd-test-sidecar
@@ -44,8 +109,9 @@ services:
     networks:
       - vcd-test-net
 
-  # vuln-app の destroy イベントを監視し、docker run で再生成する
-  # docker compose を使わないのでプロジェクト名の不一致問題が起きない
+  # ────────────────────────────────
+  # 5. Watchdog — コンテナ再生成
+  # ────────────────────────────────
   vuln-app-watchdog:
     image: docker:27-cli
     container_name: vcd-test-watchdog
@@ -61,5 +127,5 @@ services:
 
 networks:
   vcd-test-net:
-    name: vcd-test-net    # 固定名にすることでWatchdogの docker run から参照できる
+    name: vcd-test-net
     driver: bridge
