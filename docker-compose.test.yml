@@ -1,27 +1,28 @@
 version: "3.8"
 
-# VCD 動作検証環境（Falco統合版）
+# VCD 動作検証環境（Webhook直接トリガー版）
 #
 # アーキテクチャ:
-#   vuln-app  ← 攻撃者が操作（ブラウザで http://localhost:8080）
-#      ↓ syscall
-#   Falco     ← カーネルレベルで検知（modern eBPF）
-#      ↓ HTTP
-#   Falcosidekick ← アラートをフィルタ・転送
+#   trigger_alert.sh  ← 攻撃シナリオを模したアラートを手動送信
 #      ↓ HTTP POST /webhook
 #   vcd-sidecar ← ネットワーク断 → 証拠保全 → コンテナ削除
-#      ↓ destroy イベント
+#      ↓ destroy
 #   vuln-app-watchdog ← イメージから再生成（クリーンな状態に戻る）
 #
 # 使い方:
-#   docker compose -f docker-compose.test.yml up --build
+#   1. 起動:
+#      docker compose -f docker-compose.test.yml up --build -d
 #
-# ドライバ要件（WSL2 / Linux 5.8+ でサポート）:
-#   エンジン種別は falco/falco.yaml の engine: kind: modern_ebpf で指定する（CLI フラグ不要）。
-#   カーネル 5.8 以上かつ BTF（BPF Type Format）が有効であることが必要。
-#   WSL2 kernel 6.x では動作確認済み。
-#   modern eBPF 非対応環境では /boot と /lib/modules をマウントし、
-#   falco.yaml の engine.kind を kmod に変更してください。
+#   2. VCD フローを手動トリガー（シナリオ番号を選択）:
+#      ./tests/trigger_alert.sh 1   # Shell spawned（コマンドインジェクション）
+#      ./tests/trigger_alert.sh 2   # Outbound connection（リバースシェル）
+#      ./tests/trigger_alert.sh 3   # File written（Webshell設置）
+#      ./tests/trigger_alert.sh 4   # Privilege escalation（特権昇格）
+#
+#   3. 確認:
+#      docker ps -a | grep vuln-app          # コンテナが削除・再生成されるか
+#      docker logs vcd-test-sidecar          # VCD フローのログ
+#      ls ./forensics/                       # 証拠ファイルの保存を確認
 #
 # ⚠ このファイルは検証専用です。本番環境では使用しないでください。
 
@@ -41,58 +42,7 @@ services:
       - vcd-test-net
 
   # ────────────────────────────────
-  # 2. Falco — syscall監視エンジン（kmod ドライバー使用）
-  #    falco:latest (0.43+) は起動時に kmod のダウンロード or コンパイルを自己完結で行う。
-  #    VirtualBox では modern_ebpf が動作しないため engine.kind: kmod を使用する。
-  #    /usr/src はオーバーレイしない — Falco の kmod ソースを保持するため /host/usr/src にマウント。
-  # ────────────────────────────────
-  falco:
-    # kmod はホスト側で apt install falco によりロード済み（DKMS 管理）
-    # フル版イメージを使用 — libcontainer.so などのプラグインが含まれるため。
-    # バージョンはホストの falco と合わせること（現在 0.43.1）
-    image: falcosecurity/falco:0.43.1
-    container_name: vcd-test-falco
-    restart: on-failure
-    privileged: true
-    environment:
-      - HOST_ROOT=/host
-    entrypoint: ["/usr/bin/falco"]
-    volumes:
-      - /proc:/host/proc:ro
-      - /dev:/host/dev                              # ホストの /dev/falco0 を /host/dev/falco0 として参照
-      - /var/run/docker.sock:/host/var/run/docker.sock
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./falco/falco.yaml:/etc/falco/falco.yaml:ro
-      - ./falco/vcd_rules.yaml:/etc/falco/rules.d/vcd_rules.yaml:ro
-    depends_on:
-      - falcosidekick
-    networks:
-      - vcd-test-net
-
-  # ────────────────────────────────
-  # 3. Falcosidekick — アラート転送ルーター
-  # ────────────────────────────────
-  falcosidekick:
-    image: falcosecurity/falcosidekick:latest
-    container_name: vcd-test-falcosidekick
-    restart: always
-    environment:
-      # vcd-sidecar の webhook に転送
-      - WEBHOOK_ADDRESS=http://vcd-sidecar:8888/webhook
-      - WEBHOOK_CHECKCERT=false
-      # WARNING 以上のアラートのみ転送（DEBUG / INFORMATIONAL を除外）
-      - WEBHOOK_MINIMUMPRIORITY=warning
-      # 転送ログを表示（動作確認用）
-      - DEBUG=true
-    ports:
-      - "2801:2801"                   # Falco → Falcosidekick（内部通信用）
-    depends_on:
-      - vcd-sidecar
-    networks:
-      - vcd-test-net
-
-  # ────────────────────────────────
-  # 4. VCD Sidecar
+  # 2. VCD Sidecar — 検知→隔離→証拠保全→削除
   # ────────────────────────────────
   vcd-sidecar:
     build: .
@@ -115,7 +65,7 @@ services:
       - vcd-test-net
 
   # ────────────────────────────────
-  # 5. Watchdog — コンテナ再生成
+  # 3. Watchdog — コンテナ再生成
   # ────────────────────────────────
   vuln-app-watchdog:
     image: docker:27-cli
