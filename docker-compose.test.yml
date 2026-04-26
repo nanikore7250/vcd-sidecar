@@ -44,23 +44,25 @@ services:
   # 2. Falco — syscall監視エンジン
   # ────────────────────────────────
   falco:
-    image: falcosecurity/falco-no-driver:latest
+    # falco:0.39.2 を固定指定 — 0.43 以降は container 情報がプラグイン化されており
+    # 既存のルール構文と互換性がない。kmod コンパイル環境も同梱。
+    image: falcosecurity/falco:0.39.2
     container_name: vcd-test-falco
     restart: on-failure
-    privileged: true                  # eBPF プローブのロードに必要
+    privileged: true                  # kmod のロードに必要
     environment:
-      # HOST_ROOT を設定することで Falco が /host 配下のカーネル情報と
-      # Docker ソケットを自動検出する（container.id / container.name の解決に必要）
       - HOST_ROOT=/host
-    # /docker-entrypoint.sh はカーネルモジュールをロードしようとするため迂回する。
-    # エンジン種別は falco.yaml の engine: kind: modern_ebpf で指定する（CLI フラグ不要）。
-    entrypoint: ["/usr/bin/falco"]
+    # エントリポイントはデフォルト（/docker-entrypoint.sh）のままにする。
+    # kmod を自動コンパイル・ロードした後 falco 本体を起動するため。
     volumes:
       - /proc:/host/proc:ro
       - /var/run/docker.sock:/host/var/run/docker.sock
-      - /var/run/docker.sock:/var/run/docker.sock   # 標準パスでも解決できるようにする
+      - /var/run/docker.sock:/var/run/docker.sock
+      # kmod のコンパイルに必要なカーネルヘッダー
+      - /boot:/boot:ro
+      - /lib/modules:/lib/modules:ro
+      - /usr/src:/usr/src:ro
       - ./falco/falco.yaml:/etc/falco/falco.yaml:ro
-      # カスタムVCDルール（/etc/falco/rules.d/ に配置することで組み込みルールと共存）
       - ./falco/vcd_rules.yaml:/etc/falco/rules.d/vcd_rules.yaml:ro
     depends_on:
       - falcosidekick

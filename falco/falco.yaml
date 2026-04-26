@@ -6,11 +6,7 @@
 # ドライバ設定（0.38 以降は engine セクションで指定する）
 # カスタム falco.yaml でデフォルトを上書きするため、明示的に記載が必要
 engine:
-  kind: modern_ebpf
-  modern_ebpf:
-    cpus_for_each_buffer: 2
-    buf_size_preset: 4
-    drop_failed_exit: false
+  kind: kmod
 
 # ルールファイルの読み込み順序
 # NOTICE: 0.38 以降は rules_file（単数）が廃止され rules_files（複数）が必須
