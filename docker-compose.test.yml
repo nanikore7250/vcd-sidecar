@@ -41,27 +41,27 @@ services:
       - vcd-test-net
 
   # ────────────────────────────────
-  # 2. Falco — syscall監視エンジン
+  # 2. Falco — syscall監視エンジン（kmod ドライバー使用）
+  #    falco:latest (0.43+) は起動時に kmod のダウンロード or コンパイルを自己完結で行う。
+  #    VirtualBox では modern_ebpf が動作しないため engine.kind: kmod を使用する。
+  #    /usr/src はオーバーレイしない — Falco の kmod ソースを保持するため /host/usr/src にマウント。
   # ────────────────────────────────
   falco:
-    # falco:0.39.2 を固定指定 — 0.43 以降は container 情報がプラグイン化されており
-    # 既存のルール構文と互換性がない。kmod コンパイル環境も同梱。
-    image: falcosecurity/falco:0.39.2
+    # kmod はホスト側で apt install falco によりロード済み（DKMS 管理）
+    # フル版イメージを使用 — libcontainer.so などのプラグインが含まれるため。
+    # バージョンはホストの falco と合わせること（現在 0.43.1）
+    image: falcosecurity/falco:0.43.1
     container_name: vcd-test-falco
     restart: on-failure
-    privileged: true                  # kmod のロードに必要
+    privileged: true
     environment:
       - HOST_ROOT=/host
-    # エントリポイントはデフォルト（/docker-entrypoint.sh）のままにする。
-    # kmod を自動コンパイル・ロードした後 falco 本体を起動するため。
+    entrypoint: ["/usr/bin/falco"]
     volumes:
       - /proc:/host/proc:ro
+      - /dev:/host/dev                              # ホストの /dev/falco0 を /host/dev/falco0 として参照
       - /var/run/docker.sock:/host/var/run/docker.sock
       - /var/run/docker.sock:/var/run/docker.sock
-      # kmod のコンパイルに必要なカーネルヘッダー
-      - /boot:/boot:ro
-      - /lib/modules:/lib/modules:ro
-      - /usr/src:/usr/src:ro
       - ./falco/falco.yaml:/etc/falco/falco.yaml:ro
       - ./falco/vcd_rules.yaml:/etc/falco/rules.d/vcd_rules.yaml:ro
     depends_on:

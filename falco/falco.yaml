@@ -8,6 +8,15 @@
 engine:
   kind: kmod
 
+# Falco 0.40 以降は container 情報がプラグイン化された。
+# 明示的にロードしないと container.* フィールドを使うルールが起動エラーになる。
+plugins:
+  - name: container
+    library_path: libcontainer.so
+    init_config: ""
+
+load_plugins: [container]
+
 # ルールファイルの読み込み順序
 # NOTICE: 0.38 以降は rules_file（単数）が廃止され rules_files（複数）が必須
 rules_files:
