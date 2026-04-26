@@ -5,6 +5,16 @@
 # これにより Apache/PHP の通常起動と攻撃を正確に区別できる。
 
 # 検証対象の Web サーバープロセス（PHP/Apache の各種バイナリ名を列挙）
+# デバッグ用: コンテナ内の全 execve をキャプチャ（親プロセス問わず）
+# Falco が kmod 経由でコンテナ syscall を取れているか確認するためのルール
+# 確認後は削除すること
+- rule: VCD - DEBUG ALL execve
+  desc: debug - container フィルタなし・全 execve
+  condition: evt.type = execve
+  output: "ALL execve (container=%container.name cid=%container.id proc=%proc.name parent=%proc.pname)"
+  priority: WARNING
+  tags: [vcd, debug]
+
 - macro: webserver_parent
   condition: >
     proc.pname in (apache2, httpd, nginx, php, php-fpm, php-fpm8.2, php-fpm8.1,

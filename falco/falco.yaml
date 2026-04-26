@@ -37,7 +37,7 @@ http_output:
 
 # コンテナログが読みやすくなるように stdout への出力は無効化
 stdout_output:
-  enabled: false
+  enabled: true
 
 # ログ設定
 log_stderr: true
