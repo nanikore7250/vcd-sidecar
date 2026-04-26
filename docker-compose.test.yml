@@ -17,11 +17,11 @@ version: "3.8"
 #   docker compose -f docker-compose.test.yml up --build
 #
 # ドライバ要件（WSL2 / Linux 5.8+ でサポート）:
-#   このファイルは modern eBPF を使用する。
+#   エンジン種別は falco/falco.yaml の engine: kind: modern_ebpf で指定する（CLI フラグ不要）。
 #   カーネル 5.8 以上かつ BTF（BPF Type Format）が有効であることが必要。
 #   WSL2 kernel 6.x では動作確認済み。
-#   BTF 未対応環境では falco の command を以下に変更してください:
-#     command: ["falco"]  # カーネルモジュールを自動選択（要 privileged + /boot /lib/modules マウント）
+#   modern eBPF 非対応環境では /boot と /lib/modules をマウントし、
+#   falco.yaml の engine.kind を kmod に変更してください。
 #
 # ⚠ このファイルは検証専用です。本番環境では使用しないでください。
 
@@ -52,10 +52,13 @@ services:
       # HOST_ROOT を設定することで Falco が /host 配下のカーネル情報と
       # Docker ソケットを自動検出する（container.id / container.name の解決に必要）
       - HOST_ROOT=/host
-    command: ["/usr/bin/falco", "--modern-bpf"]
+    # /docker-entrypoint.sh はカーネルモジュールをロードしようとするため迂回する。
+    # エンジン種別は falco.yaml の engine: kind: modern_ebpf で指定する（CLI フラグ不要）。
+    entrypoint: ["/usr/bin/falco"]
     volumes:
       - /proc:/host/proc:ro
       - /var/run/docker.sock:/host/var/run/docker.sock
+      - /var/run/docker.sock:/var/run/docker.sock   # 標準パスでも解決できるようにする
       - ./falco/falco.yaml:/etc/falco/falco.yaml:ro
       # カスタムVCDルール（/etc/falco/rules.d/ に配置することで組み込みルールと共存）
       - ./falco/vcd_rules.yaml:/etc/falco/rules.d/vcd_rules.yaml:ro

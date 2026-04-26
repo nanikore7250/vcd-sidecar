@@ -8,6 +8,9 @@ from app.terminator import terminate_container
 
 logger = logging.getLogger(__name__)
 
+_active: set[str] = set()
+_active_lock = threading.Lock()
+
 
 def _execute_flow(container_id: str, alert: dict):
     """Execute the VCD flow: isolate → forensics → (optional dump) → terminate → cleanup."""
@@ -59,9 +62,18 @@ def _execute_flow(container_id: str, alert: dict):
     if isolated_ip:
         remove_isolation(isolated_ip)
 
+    with _active_lock:
+        _active.discard(container_id)
+
 
 def run_vcd_flow(container_id: str, alert: dict):
     """Kick off the VCD flow in a background thread so the webhook returns fast."""
+    with _active_lock:
+        if container_id in _active:
+            logger.info("VCD flow already in progress for %s, skipping duplicate alert", container_id)
+            return
+        _active.add(container_id)
+
     thread = threading.Thread(
         target=_execute_flow,
         args=(container_id, alert),

@@ -1,52 +1,72 @@
+# Webサーバープロセスを起点に絞り込む（インフラコンテナの誤検知を防ぐ）
+#
+# container.name によるフィルタはコンテナメタデータ解決の遅延があるため使用しない。
+# 代わりに proc.pname（親プロセス名）で「Webサーバーが子として起動した」ことを検知する。
+# これにより Apache/PHP の通常起動と攻撃を正確に区別できる。
+
+# 検証対象の Web サーバープロセス（PHP/Apache の各種バイナリ名を列挙）
+- macro: webserver_parent
+  condition: >
+    proc.pname in (apache2, httpd, nginx, php, php-fpm, php-fpm8.2, php-fpm8.1,
+                   php-fpm8.0, php-fpm7.4, php8.2, php8.1, php8.0, php7.4,
+                   gunicorn, uvicorn, uwsgi)
+
 - rule: VCD - Shell spawned in container
-  desc: シェルがコンテナ内で起動した（コマンドインジェクション・リバースシェルの可能性）
-  condition: container and proc.name in (bash, sh, zsh, dash, ksh)
-  output: "Shell spawned in container (container=%container.name container_id=%container.id pid=%proc.pid user=%user.name cmdline=%proc.cmdline)"
+  desc: Webサーバープロセスがシェルを起動した（コマンドインジェクションの可能性）
+  condition: >
+    container
+    and evt.type = execve
+    and proc.name in (bash, sh, zsh, dash, ksh)
+    and webserver_parent
+  output: "Shell spawned in container (container=%container.name container_id=%container.id pid=%proc.pid user=%user.name cmdline=%proc.cmdline parent=%proc.pname)"
   priority: WARNING
   tags: [vcd, shell]
 
 - rule: VCD - Outbound connection in container
-  desc: コンテナからの予期しない外向き接続（リバースシェルの可能性）
+  desc: Webサーバープロセスが外向き接続を試みた（リバースシェルの可能性）
   condition: >
     container
     and evt.type = connect
     and fd.typechar = 4
     and not fd.sip in (127.0.0.1)
-  output: "Outbound connection from container (container=%container.name container_id=%container.id proc=%proc.name pid=%proc.pid dest=%fd.rip:%fd.rport)"
+    and webserver_parent
+  output: "Outbound connection from container (container=%container.name container_id=%container.id proc=%proc.name pid=%proc.pid parent=%proc.pname dest=%fd.rip:%fd.rport)"
   priority: WARNING
   tags: [vcd, network]
 
 - rule: VCD - Unexpected file written in container
-  desc: コンテナ内に想定外のファイルが配置された（Webshell等の可能性）
+  desc: Webサーバープロセスが /tmp にファイルを配置した（Webshell等の可能性）
   condition: >
     container
     and evt.type in (creat, open)
     and evt.is_open_write = true
     and fd.typechar = f
     and fd.name startswith /tmp
-  output: "Unexpected file written in container (container=%container.name container_id=%container.id proc=%proc.name pid=%proc.pid file=%fd.name)"
+    and webserver_parent
+  output: "Unexpected file written in container (container=%container.name container_id=%container.id proc=%proc.name pid=%proc.pid parent=%proc.pname file=%fd.name)"
   priority: WARNING
   tags: [vcd, file]
 
 - rule: VCD - Privilege escalation attempt
-  desc: 特権昇格の試み（setuid/setgidシステムコール）
+  desc: 非rootプロセスが root への setuid/setgid を試みる（真の特権昇格のみ）
+  # Apache の root→www-data 降格（正常動作）は除外される:
+  #   その場合 user.uid=0 なので user.uid != 0 条件に引っかからない
   condition: >
     container
     and evt.type in (setuid, setgid)
-    and user.name != root
-  output: "Privilege escalation attempt (container=%container.name container_id=%container.id proc=%proc.name pid=%proc.pid user=%user.name)"
+    and user.uid != 0
+    and evt.rawarg.uid = 0
+  output: "Privilege escalation attempt (container=%container.name container_id=%container.id proc=%proc.name pid=%proc.pid user=%user.name target_uid=%evt.rawarg.uid)"
   priority: CRITICAL
   tags: [vcd, privilege]
 
 - rule: VCD - Sensitive file read in container
-  desc: /etc/passwd や /etc/shadow など機密ファイルへのアクセス
-  # NOTE: 除外リストは最小限です。本番環境に合わせてチューニングしてください。
-  # 例: less, vim, python, ruby など正常にアクセスするプロセスを追加する
+  desc: Webサーバープロセスが機密ファイルを読み取った（情報窃取の可能性）
   condition: >
     container
     and evt.type = open
     and fd.name in (/etc/shadow, /etc/passwd, /etc/sudoers)
-    and not proc.name in (cat, grep, awk)
-  output: "Sensitive file read in container (container=%container.name container_id=%container.id proc=%proc.name pid=%proc.pid file=%fd.name)"
+    and webserver_parent
+  output: "Sensitive file read in container (container=%container.name container_id=%container.id proc=%proc.name pid=%proc.pid parent=%proc.pname file=%fd.name)"
   priority: WARNING
   tags: [vcd, file, sensitive]

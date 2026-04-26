@@ -1,15 +1,25 @@
-# Falco configuration — vcd-sidecar 連携用
+# Falco configuration — vcd-sidecar 連携用 (Falco 0.39+)
 #
 # Falco が検知したアラートを Falcosidekick 経由で vcd-sidecar に転送する。
 # このファイルは docker-compose.test.yml から /etc/falco/falco.yaml にマウントされる。
 
+# ドライバ設定（0.38 以降は engine セクションで指定する）
+# カスタム falco.yaml でデフォルトを上書きするため、明示的に記載が必要
+engine:
+  kind: modern_ebpf
+  modern_ebpf:
+    cpus_for_each_buffer: 2
+    buf_size_preset: 4
+    drop_failed_exit: false
+
 # ルールファイルの読み込み順序
-rules_file:
-  - /etc/falco/falco_rules.yaml         # Falco組み込みルール
+# NOTICE: 0.38 以降は rules_file（単数）が廃止され rules_files（複数）が必須
+rules_files:
+  - /etc/falco/falco_rules.yaml         # Falco 組み込みルール
   - /etc/falco/falco_rules.local.yaml   # ローカル上書き用（存在しなくてもよい）
   - /etc/falco/rules.d/                 # カスタムルール（vcd_rules.yaml はここ）
 
-# JSON形式で出力する（Falcosidekick が解析するために必要）
+# JSON 形式で出力する（Falcosidekick が解析するために必要）
 json_output: true
 json_include_output_property: true
 json_include_tags_property: true
@@ -28,6 +38,3 @@ stdout_output:
 log_stderr: true
 log_syslog: false
 log_level: info
-
-# container.id / container.name の解決は HOST_ROOT=/host 環境変数と
-# /var/run/docker.sock:/host/var/run/docker.sock マウントで自動的に行われる
